@@ -1,18 +1,35 @@
-#include "application.h"
+#include "Particle.h"
 #include "ThingSpeak.h"
 #include "DS18B20.h"
 #include "fonts.h"
 #include "Adafruit_mfGFX.h"
 #include "Adafruit_SSD1306.h"
+#include "PietteTech_DHT.h"
 
 SYSTEM_THREAD(ENABLED);
 SYSTEM_MODE(SEMI_AUTOMATIC);
+
+//DHT22 Sensor
+#define DHTTYPE  DHT22              // Sensor type DHT11/21/22/AM2301/AM2302
+#define DHTPIN   D3           	    // Digital pin for communications
+#define DHT_SAMPLE_INTERVAL   2000  // Sample every two seconds
+void dht_wrapper(); // must be declared before the lib initialization
+
+PietteTech_DHT DHT(DHTPIN, DHTTYPE, dht_wrapper);
+unsigned int prevSampleTime;	    // Next time we want to start sample
+bool aquireDHTStarted;		    // flag to indicate we started acquisition
+float dht22Temp = 0.0;
+float dht22Humd = 0.0;
+void dht_wrapper() {
+  DHT.isrCallback();
+}
+
 //Temperature Sensors
 uint32_t tempLastMillis = 0;
 const int MAXRETRY = 3;
 const int pinLED = D7;
-const int nSENSORS = 3;
-float tempSensor[nSENSORS] = {NAN, NAN, NAN};
+const int nSENSORS = 2;
+float tempSensor[nSENSORS] = {NAN, NAN};
 const int pinOneWire = D2;
 
 //ThingSpeak
@@ -71,11 +88,25 @@ void loop() {
             if (!isnan(temp)) tempSensor[i] = temp;
         }
 
+        if (!aquireDHTStarted) {
+	        DHT.acquire();
+	        aquireDHTStarted = true;
+	       }
+
+        if (!DHT.acquiring()) {
+            int result = DHT.getStatus();
+            dht22Temp = DHT.getFahrenheit();
+            dht22Humd = DHT.getHumidity();
+            //Serial.print(" T: "); Serial.println(dht22Temp);
+            //Serial.print(" H: "); Serial.print(dht22Humd);
+            aquireDHTStarted = false;
+        }
+
         oled.clearDisplay();
         oled.setCursor(0,0);
-        oled.print("T1:  "); oled.println(tempSensor[0],1);
-        oled.print("T2:  "); oled.println(tempSensor[1],1);
-        oled.print("T3:  "); oled.println(tempSensor[2],1);
+        oled.print("T1: "); oled.println(tempSensor[0],1);
+        oled.print("T2: "); oled.println(tempSensor[1],1);
+        oled.print("T/H: "); oled.print(dht22Temp,1); oled.print(":"); oled.println(dht22Humd,1);
         oled.display();
 
         tempLastMillis = millis();
@@ -84,7 +115,9 @@ void loop() {
     if (millis() - publishLastMillis >= 180000L && Particle.connected()) {
         ThingSpeak.setField(1,tempSensor[0]);
         ThingSpeak.setField(2,tempSensor[1]);
-        ThingSpeak.setField(3,tempSensor[2]);
+        ThingSpeak.setField(3,dht22Temp);
+        ThingSpeak.setField(4,dht22Humd);
+        //ThingSpeak.setField(3,tempSensor[2]);
         ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
 
         publishLastMillis = millis();
