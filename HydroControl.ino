@@ -9,6 +9,12 @@
 SYSTEM_THREAD(ENABLED);
 SYSTEM_MODE(SEMI_AUTOMATIC);
 
+//Exhaust control
+#define FANCONTROLPIN   D5 //Turns on/off the exhuast fan
+bool turnExhuastFanON = false;
+uint32_t prevFanTurnOnMillis = millis(); //prevents fan from turning on too frequently.
+
+
 //DHT22 Sensor
 #define DHTTYPE  DHT22              // Sensor type DHT11/21/22/AM2301/AM2302
 #define DHTPIN   D3           	    // Digital pin for communications
@@ -20,6 +26,8 @@ unsigned int prevSampleTime;	    // Next time we want to start sample
 bool aquireDHTStarted;		    // flag to indicate we started acquisition
 float dht22Temp = 0.0;
 float dht22Humd = 0.0;
+float prevDht22Temp = 0.0;
+float prevDht22Humd = 0.0;
 void dht_wrapper() {
   DHT.isrCallback();
 }
@@ -52,6 +60,10 @@ double getTemp(uint8_t addr[8]);
 
 void setup() {
     Serial.begin(9600);
+
+    pinMode(pinLED, OUTPUT);
+    pinMode(FANCONTROLPIN, OUTPUT_PULLDOWN);
+
     oled.begin(SSD1306_SWITCHCAPVCC, 0x3C); //Start SSD1306 oled display
     oled.setTextColor(WHITE);
     oled.setRotation(0);     //set rotation 0=0, 1=90, 2=180, 3=270
@@ -59,7 +71,6 @@ void setup() {
     oled.setTextSize(1);
     oled.clearDisplay();
     oled.display();
-    pinMode(pinLED, OUTPUT);
 
     numCreds = WiFi.getCredentials(ap, 5);
     for(byte i = 0; i < numCreds; i++){
@@ -82,6 +93,8 @@ void setup() {
 
 void loop() {
 
+  if (!Particle.connected()) Particle.connect();
+
     if (millis() - tempLastMillis >= 500) {
         for (int i = 0; i < nSENSORS; i++) {
             float temp = getTemp(sensorAddresses[i]);
@@ -99,6 +112,15 @@ void loop() {
             dht22Humd = DHT.getHumidity();
             //Serial.print(" T: "); Serial.println(dht22Temp);
             //Serial.print(" H: "); Serial.print(dht22Humd);
+            if (dht22Temp > 0) prevDht22Temp = dht22Temp; //prevent publishing negative error values
+            else dht22Temp = prevDht22Temp;
+
+            if (dht22Temp > 80) turnExhuastFanON = true;
+            else turnExhuastFanON = false;
+
+            if (dht22Humd > 0) prevDht22Humd = dht22Humd;
+            else dht22Humd = prevDht22Humd;
+
             aquireDHTStarted = false;
         }
 
@@ -111,6 +133,11 @@ void loop() {
 
         tempLastMillis = millis();
     }
+
+    if (turnExhuastFanON && (millis() - prevFanTurnOnMillis > 60000L)) {
+      digitalWrite(FANCONTROLPIN, HIGH);
+      prevFanTurnOnMillis = millis();
+    } else digitalWrite(FANCONTROLPIN, LOW);
 
     if (millis() - publishLastMillis >= 180000L && Particle.connected()) {
         ThingSpeak.setField(1,tempSensor[0]);
